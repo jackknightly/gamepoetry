@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            cursor: none;
+            font-family: monospace;
+        }
+        
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+        }
+        
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 14px;
+            text-shadow: 0 0 10px currentColor;
+            z-index: 10;
+        }
+        
+        .glitch {
+            animation: glitch 0.3s infinite;
+        }
+        
+        @keyframes glitch {
+            0%, 100% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <div>CONTROLS: <span id="controls">???</span></div>
+        <div>SCORE: <span id="score">0</span></div>
+        <div>MODE: <span id="mode">CHAOS</span></div>
+    </div>
+    <canvas id="game"></canvas>
+    
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const infoEl = document.getElementById('info');
+        const controlsEl = document.getElementById('controls');
+        const scoreEl = document.getElementById('score');
+        const modeEl = document.getElementById('mode');
+        
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        // Audio context for generating sounds
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        function playSound(freq = Math.random() * 800 + 200, duration = 0.1) {
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.frequency.value = freq;
+            oscillator.type = ['sine', 'square', 'sawtooth', 'triangle'][Math.floor(Math.random() * 4)];
+            
+            gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // Game state
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            vx: 0,
+            vy: 0,
+            size: 30,
+            shape: 'circle',
+            color: '#ff0',
+            rotation: 0,
+            trail: []
+        };
+        
+        let particles = [];
+        let obstacles = [];
+        let score = 0;
+        let gameMode = 'CHAOS';
+        let controlScheme = 0;
+        let mouseX = 0, mouseY = 0;
+        let keys = {};
+        let time = 0;
+        
+        // Control schemes
+        const controlSchemes = [
+            { name: "WASD", desc: "Normal... or is it?" },
+            { name: "MOUSE REPEL", desc: "Run from cursor!" },
+            { name: "ROTATE ONLY", desc: "Q/E to rotate, auto-move" },
+            { name: "SNAKE", desc: "Can't stop moving!" },
+            { name: "REVERSE", desc: "Everything backwards" },
+            { name: "DRUNK", desc: "Random drift" }
+        ];
+        
+        // Randomize controls every few seconds
+        setInterval(() => {
+            controlScheme = Math.floor(Math.random() * controlSchemes.length);
+            controlsEl.textContent = controlSchemes[controlScheme].name;
+            infoEl.classList.add('glitch');
+            setTimeout(() => infoEl.classList.remove('glitch'), 300);
+            playSound(300 + Math.random() * 500, 0.2);
+        }, 5000);
+        
+        // Random game mode changes
+        setInterval(() => {
+            const modes = ['CHAOS', 'GRAVITY', 'MAGNET', 'MIRROR', 'WOBBLE', 'SHRINK'];
+            gameMode = modes[Math.floor(Math.random() * modes.length)];
+            modeEl.textContent = gameMode;
+            
+            // Flash screen
+            ctx.fillStyle = `hsl(${Math.random() * 360}, 100%, 50%)`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            playSound(100 + Math.random() * 200, 0.3);
+        }, 7000);
+        
+        // Input handlers
+        window.addEventListener('keydown', e => keys[e.key] = true);
+        window.addEventListener('keyup', e => keys[e.key] = false);
+        window.addEventListener('mousemove', e => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+        
+        // Click to make explosions
+        window.addEventListener('click', e => {
+            for (let i = 0; i < 50; i++) {
+                particles.push({
+                    x: e.clientX,
+                    y: e.clientY,
+                    vx: (Math.random() - 0.5) * 20,
+                    vy: (Math.random() - 0.5) * 20,
+                    size: Math.random() * 10 + 5,
+                    color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+                    life: 1
+                });
+            }
+            playSound(50 + Math.random() * 100, 0.5);
+        });
+        
+        // Spawn random obstacles
+        setInterval(() => {
+            obstacles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 50 + 20,
+                vx: (Math.random() - 0.5) * 5,
+                vy: (Math.random() - 0.5) * 5,
+                color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+                type: Math.random() > 0.5 ? 'bouncer' : 'spinner',
+                rotation: 0
+            });
+            
+            if (obstacles.length > 10) obstacles.shift();
+        }, 2000);
+        
+        function updatePlayer() {
+            // Apply control scheme
+            switch (controlScheme) {
+                case 0: // "Normal" WASD
+                    if (keys['w']) player.vy -= Math.random() * 2;
+                    if (keys['s']) player.vy += Math.random() * 2;
+                    if (keys['a']) player.vx -= Math.random() * 2;
+                    if (keys['d']) player.vx += Math.random() * 2;
+                    break;
+                
+                case 1: // Mouse repel
+                    const dx = player.x - mouseX;
+                    const dy = player.y - mouseY;
+                    const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+                    player.vx += (dx / dist) * 2;
+                    player.vy += (dy / dist) * 2;
+                    break;
+                
+                case 2: // Rotate only
+                    if (keys['q']) player.rotation -= 0.1;
+                    if (keys['e']) player.rotation += 0.1;
+                    player.vx = Math.cos(player.rotation) * 3;
+                    player.vy = Math.sin(player.rotation) * 3;
+                    break;
+                
+                case 3: // Snake
+                    if (keys['a']) player.rotation -= 0.1;
+                    if (keys['d']) player.rotation += 0.1;
+                    player.vx = Math.cos(player.rotation) * 5;
+                    player.vy = Math.sin(player.rotation) * 5;
+                    break;
+                
+                case 4: // Reverse
+                    if (keys['w']) player.vy += 1;
+                    if (keys['s']) player.vy -= 1;
+                    if (keys['a']) player.vx += 1;
+                    if (keys['d']) player.vx -= 1;
+                    break;
+                
+                case 5: // Drunk
+                    player.vx += (Math.random() - 0.5) * 2;
+                    player.vy += (Math.random() - 0.5) * 2;
+                    break;
+            }
+            
+            // Apply game mode effects
+            switch (gameMode) {
+                case 'GRAVITY':
+                    player.vy += 0.3;
+                    break;
+                case 'MAGNET':
+                    obstacles.forEach(obs => {
+                        const dx = obs.x - player.x;
+                        const dy = obs.y - player.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy) + 1;
+                        player.vx += (dx / dist) * 0.5;
+                        player.vy += (dy / dist) * 0.5;
+                    });
+                    break;
+                case 'MIRROR':
+                    if (Math.random() > 0.98) {
+                        player.vx = -player.vx;
+                        player.vy = -player.vy;
+                    }
+                    break;
+                case 'WOBBLE':
+                    player.x += Math.sin(time * 0.1) * 5;
+                    player.y += Math.cos(time * 0.1) * 5;
+                    break;
+                case 'SHRINK':
+                    player.size *= 0.995;
+                    if (player.size < 5) player.size = 50;
+                    break;
+            }
+            
+            // Friction and update position
+            player.vx *= 0.95;
+            player.vy *= 0.95;
+            player.x += player.vx;
+            player.y += player.vy;
+            
+            // Screen wrap
+            if (player.x < 0) player.x = canvas.width;
+            if (player.x > canvas.width) player.x = 0;
+            if (player.y < 0) player.y = canvas.height;
+            if (player.y > canvas.height) player.y = 0;
+            
+            // Random shape changes
+            if (Math.random() > 0.98) {
+                player.shape = ['circle', 'square', 'triangle', 'star'][Math.floor(Math.random() * 4)];
+                player.color = `hsl(${Math.random() * 360}, 100%, 50%)`;
+                playSound(400 + Math.random() * 400, 0.05);
+            }
+            
+            // Trail
+            player.trail.push({ x: player.x, y: player.y });
+            if (player.trail.length > 20) player.trail.shift();
+        }
+        
+        function drawShape(x, y, size, shape, color, rotation = 0) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+            ctx.fillStyle = color;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            
+            switch (shape) {
+                case 'circle':
+                    ctx.beginPath();
+                    ctx.arc(0, 0, size, 0, Math.PI * 2);
+                    ctx.fill();
+                    break;
+                case 'square':
+                    ctx.fillRect(-size, -size, size * 2, size * 2);
+                    break;
+                case 'triangle':
+                    ctx.beginPath();
+                    ctx.moveTo(0, -size);
+                    ctx.lineTo(-size, size);
+                    ctx.lineTo(size, size);
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                case 'star':
+                    ctx.beginPath();
+                    for (let i = 0; i < 5; i++) {
+                        const angle = (i * Math.PI * 2) / 5 - Math.PI / 2;
+                        const x = Math.cos(angle) * size;
+                        const y = Math.sin(angle) * size;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                        
+                        const innerAngle = angle + Math.PI / 5;
+                        const innerX = Math.cos(innerAngle) * (size * 0.5);
+                        const innerY = Math.sin(innerAngle) * (size * 0.5);
+                        ctx.lineTo(innerX, innerY);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+            }
+            
+            ctx.restore();
+        }
+        
+        function checkCollisions() {
+            obstacles.forEach(obs => {
+                const dx = player.x - obs.x;
+                const dy = player.y - obs.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist < player.size + obs.size) {
+                    if (obs.type === 'bouncer') {
+                        player.vx = -player.vx * 2;
+                        player.vy = -player.vy * 2;
+                        score += 10;
+                    } else {
+                        player.rotation += 0.5;
+                        score += 5;
+                    }
+                    
+                    // Explosion effect
+                    for (let i = 0; i < 20; i++) {
+                        particles.push({
+                            x: obs.x,
+                            y: obs.y,
+                            vx: (Math.random() - 0.5) * 10,
+                            vy: (Math.random() - 0.5) * 10,
+                            size: Math.random() * 5 + 2,
+                            color: obs.color,
+                            life: 1
+                        });
+                    }
+                    
+                    playSound(200 + Math.random() * 600, 0.1);
+                    obs.x = Math.random() * canvas.width;
+                    obs.y = Math.random() * canvas.height;
+                }
+            });
+        }
+        
+        function gameLoop() {
+            time++;
+            
+            // Background with trails
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Random background flashes
+            if (Math.random() > 0.98) {
+                ctx.fillStyle = `hsla(${Math.random() * 360}, 100%, 50%, 0.1)`;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            // Update everything
+            updatePlayer();
+            checkCollisions();
+            
+            // Update obstacles
+            obstacles.forEach(obs => {
+                obs.x += obs.vx;
+                obs.y += obs.vy;
+                obs.rotation += 0.05;
+                
+                if (obs.x < 0 || obs.x > canvas.width) obs.vx = -obs.vx;
+                if (obs.y < 0 || obs.y > canvas.height) obs.vy = -obs.vy;
+            });
+            
+            // Update particles
+            particles = particles.filter(p => {
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy += 0.5;
+                p.life -= 0.02;
+                p.size *= 0.95;
+                return p.life > 0;
+            });
+            
+            // Draw player trail
+            player.trail.forEach((point, i) => {
+                ctx.fillStyle = `hsla(${(time + i * 10) % 360}, 100%, 50%, ${i / player.trail.length})`;
+                ctx.fillRect(point.x - 2, point.y - 2, 4, 4);
+            });
+            
+            // Draw obstacles
+            obstacles.forEach(obs => {
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = obs.color;
+                drawShape(obs.x, obs.y, obs.size, 
+                    obs.type === 'bouncer' ? 'circle' : 'square', 
+                    obs.color, obs.rotation);
+                ctx.shadowBlur = 0;
+            });
+            
+            // Draw particles
+            particles.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = p.life;
+                ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+                ctx.globalAlpha = 1;
+            });
+            
+            // Draw player
+            ctx.shadowBlur = 30;
+            ctx.shadowColor = player.color;
+            drawShape(player.x, player.y, player.size, player.shape, player.color, player.rotation);
+            ctx.shadowBlur = 0;
+            
+            // Update score
+            score++;
+            scoreEl.textContent = score;
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start game
+        gameLoop();
+        
+        // Window resize
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
